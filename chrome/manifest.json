@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Key Ideas",
+  "version": "1.0",
+  "description": "Extract key ideas from a YouTube video transcript using an LLM.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "http://127.0.0.1:5012/*"
+  ],
+  "action": {
+    "default_title": "YouTube Key Ideas"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/watch*"],
+      "js": ["marked.umd.js", "content.js"]
+    }
+  ]
+}
