@@ -45,14 +45,19 @@ function sanitizeMarkdownHtml(html) {
 }
 
 function renderMarkdown(text) {
-  const parser = globalThis.marked;
-  if (!parser || typeof parser.parse !== "function") {
-    const fallback = document.createElement("p");
-    fallback.textContent = text;
-    return fallback.outerHTML;
+  const library = globalThis.marked;
+  const parse =
+    typeof library?.parse === "function"
+      ? library.parse.bind(library)
+      : typeof library?.marked === "function"
+        ? library.marked.bind(library)
+        : null;
+
+  if (!parse) {
+    return '<p>Markdown parser failed to load.</p>';
   }
 
-  return sanitizeMarkdownHtml(parser.parse(text, { gfm: true, breaks: true }));
+  return sanitizeMarkdownHtml(parse(text || "", { gfm: true, breaks: true }));
 }
 
 function createPanel() {

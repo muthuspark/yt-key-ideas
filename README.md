@@ -22,6 +22,8 @@ The service runs at:
 http://127.0.0.1:5012
 ```
 
+Open that URL in a browser to view saved summaries.
+
 Optional model override:
 
 ```bash
@@ -44,6 +46,7 @@ curl http://127.0.0.1:5012/health
 6. Click the `YouTube Key Ideas` extension action.
 
 The extension will open a right-side panel on the YouTube page and render the summary returned by the local service.
+Each successful extraction is saved as a JSON file under `data/summaries/`.
 
 ## API
 
@@ -51,4 +54,11 @@ The extension will open a right-side panel on the YouTube page and render the su
 curl -X POST http://127.0.0.1:5012/key-ideas \
   -H "content-type: application/json" \
   -d '{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}'
+```
+
+Saved summaries:
+
+```bash
+curl http://127.0.0.1:5012/summaries
+curl http://127.0.0.1:5012/summaries/VIDEO_ID
 ```

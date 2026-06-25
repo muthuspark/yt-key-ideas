@@ -6,7 +6,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -14,6 +16,9 @@ from youtube_transcript_api import YouTubeTranscriptApi
 PORT = 5012
 DEFAULT_MODEL = "deepseek-v4-flash"
 MAX_TRANSCRIPT_CHARS = 100_000
+ROOT_DIR = Path(__file__).resolve().parent
+INDEX_PATH = ROOT_DIR / "index.html"
+SUMMARY_DIR = ROOT_DIR / "data" / "summaries"
 
 
 class ServiceError(Exception):
@@ -118,6 +123,10 @@ def validate_youtube_url(url):
   return video_id, f"https://www.youtube.com/watch?v={video_id}"
 
 
+def get_thumbnail_url(video_id):
+  return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+
+
 def fetch_title(video_url):
   page_html = fetch_text(video_url)
   raw_player = extract_json_object(page_html, "ytInitialPlayerResponse")
@@ -198,10 +207,61 @@ def get_key_ideas(title, transcript):
   return key_ideas
 
 
+def summary_path(video_id):
+  return SUMMARY_DIR / f"{video_id}.json"
+
+
+def save_summary(record):
+  SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
+  path = summary_path(record["videoId"])
+  temp_path = path.with_suffix(".json.tmp")
+  temp_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+  temp_path.replace(path)
+
+
+def read_summary(video_id):
+  if not re.fullmatch(r"[\w-]{11}", video_id):
+    raise ServiceError("Invalid video id.")
+
+  path = summary_path(video_id)
+  if not path.exists():
+    raise ServiceError("Summary not found.", 404)
+
+  try:
+    return json.loads(path.read_text(encoding="utf-8"))
+  except json.JSONDecodeError:
+    raise ServiceError("Saved summary is not valid JSON.", 500)
+
+
+def list_summaries():
+  if not SUMMARY_DIR.exists():
+    return []
+
+  summaries = []
+  for path in SUMMARY_DIR.glob("*.json"):
+    try:
+      item = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+      continue
+
+    summaries.append(
+      {
+        "videoId": item.get("videoId"),
+        "url": item.get("url"),
+        "title": item.get("title") or "Untitled video",
+        "thumbnail": item.get("thumbnail"),
+        "transcriptLength": item.get("transcriptLength", 0),
+        "createdAt": item.get("createdAt", ""),
+      }
+    )
+
+  return sorted(summaries, key=lambda item: item.get("createdAt", ""), reverse=True)
+
+
 class Handler(BaseHTTPRequestHandler):
   def end_headers(self):
     self.send_header("Access-Control-Allow-Origin", "*")
-    self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     self.send_header("Access-Control-Allow-Headers", "content-type")
     super().end_headers()
 
@@ -210,9 +270,32 @@ class Handler(BaseHTTPRequestHandler):
     self.end_headers()
 
   def do_GET(self):
-    if self.path == "/health":
+    parsed = urllib.parse.urlparse(self.path)
+    path = parsed.path
+
+    if path == "/":
+      self.write_file(INDEX_PATH, "text/html; charset=utf-8")
+      return
+    if path in ("/marked.umd.js", "/chrome/marked.umd.js"):
+      self.write_file(ROOT_DIR / "chrome" / "marked.umd.js", "text/javascript; charset=utf-8")
+      return
+    if path == "/favicon.ico":
+      self.write_empty(204, "image/x-icon")
+      return
+    if path == "/health":
       self.write_json(200, {"ok": True})
       return
+    if path == "/summaries":
+      self.write_json(200, {"ok": True, "summaries": list_summaries()})
+      return
+    if path.startswith("/summaries/"):
+      video_id = path.removeprefix("/summaries/")
+      try:
+        self.write_json(200, {"ok": True, "summary": read_summary(video_id)})
+      except ServiceError as e:
+        self.write_json(e.status, {"ok": False, "error": str(e)})
+      return
+
     self.write_json(404, {"ok": False, "error": "Not found."})
 
   def do_POST(self):
@@ -227,13 +310,21 @@ class Handler(BaseHTTPRequestHandler):
       video_id, video_url = validate_youtube_url(payload.get("url", ""))
       title, transcript = extract_transcript(video_id, video_url)
       key_ideas = get_key_ideas(title, transcript)
+      record = {
+        "videoId": video_id,
+        "url": video_url,
+        "title": title or "Untitled video",
+        "thumbnail": get_thumbnail_url(video_id),
+        "transcriptLength": len(transcript),
+        "keyIdeas": key_ideas,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+      }
+      save_summary(record)
       self.write_json(
         200,
         {
           "ok": True,
-          "title": title,
-          "transcriptLength": len(transcript),
-          "keyIdeas": key_ideas,
+          **record,
         },
       )
     except json.JSONDecodeError:
@@ -251,6 +342,24 @@ class Handler(BaseHTTPRequestHandler):
     self.send_header("content-length", str(len(body)))
     self.end_headers()
     self.wfile.write(body)
+
+  def write_file(self, path, content_type):
+    if not path.exists():
+      self.write_json(404, {"ok": False, "error": "Not found."})
+      return
+
+    body = path.read_bytes()
+    self.send_response(200)
+    self.send_header("content-type", content_type)
+    self.send_header("content-length", str(len(body)))
+    self.end_headers()
+    self.wfile.write(body)
+
+  def write_empty(self, status, content_type):
+    self.send_response(status)
+    self.send_header("content-type", content_type)
+    self.send_header("content-length", "0")
+    self.end_headers()
 
   def log_message(self, fmt, *args):
     print(f"{self.address_string()} - {fmt % args}")
