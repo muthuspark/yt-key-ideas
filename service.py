@@ -366,8 +366,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-  server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-  print(f"yt-key-ideas service running at http://127.0.0.1:{PORT}")
+  server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+  print(f"yt-key-ideas service running at http://0.0.0.0:{PORT}")
   server.serve_forever()
 
 
